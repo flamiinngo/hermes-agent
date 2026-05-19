@@ -2891,6 +2891,7 @@ def _normalize_custom_provider_entry(
         "defaultModel": "default_model",
         "contextLength": "context_length",
         "rateLimitDelay": "rate_limit_delay",
+        "sslVerify": "ssl_verify",
     }
     # api_key_env is a documented snake_case alias for key_env (see
     # website/docs/guides/azure-foundry.md).  Normalize it up front so the
@@ -2902,6 +2903,7 @@ def _normalize_custom_provider_entry(
         "api_mode", "transport", "model", "default_model", "models",
         "context_length", "rate_limit_delay",
         "request_timeout_seconds", "stale_timeout_seconds",
+        "ssl_verify",
     }
     for camel, snake in _CAMEL_ALIASES.items():
         if camel in entry and snake not in entry:
@@ -2991,6 +2993,14 @@ def _normalize_custom_provider_entry(
     rate_limit_delay = entry.get("rate_limit_delay")
     if isinstance(rate_limit_delay, (int, float)) and rate_limit_delay >= 0:
         normalized["rate_limit_delay"] = rate_limit_delay
+
+    ssl_verify_raw = entry.get("ssl_verify")
+    if ssl_verify_raw is not None:
+        if isinstance(ssl_verify_raw, bool):
+            normalized["ssl_verify"] = ssl_verify_raw
+        elif isinstance(ssl_verify_raw, str) and ssl_verify_raw.strip():
+            # Path to a custom CA certificate bundle
+            normalized["ssl_verify"] = ssl_verify_raw.strip()
 
     return normalized
 

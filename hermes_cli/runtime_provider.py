@@ -469,6 +469,9 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
                     api_mode = _parse_api_mode(entry.get("api_mode") or entry.get("transport"))
                     if api_mode:
                         result["api_mode"] = api_mode
+                    ssl_verify = entry.get("ssl_verify")
+                    if ssl_verify is not None:
+                        result["ssl_verify"] = ssl_verify
                     return result
             # Also check the 'name' field if present
             display_name = entry.get("name", "")
@@ -487,6 +490,9 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
                         api_mode = _parse_api_mode(entry.get("api_mode") or entry.get("transport"))
                         if api_mode:
                             result["api_mode"] = api_mode
+                        ssl_verify = entry.get("ssl_verify")
+                        if ssl_verify is not None:
+                            result["ssl_verify"] = ssl_verify
                         return result
 
     # Fall back to custom_providers: list (legacy format)
@@ -533,6 +539,9 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
         model_name = str(entry.get("model", "") or "").strip()
         if model_name:
             result["model"] = model_name
+        ssl_verify = entry.get("ssl_verify")
+        if ssl_verify is not None:
+            result["ssl_verify"] = ssl_verify
         return result
 
     return None
@@ -618,6 +627,9 @@ def _resolve_named_custom_runtime(
     # provider name differs from the actual model string the API expects.
     if custom_provider.get("model"):
         result["model"] = custom_provider["model"]
+    ssl_verify = custom_provider.get("ssl_verify")
+    if ssl_verify is not None:
+        result["ssl_verify"] = ssl_verify
     return result
 
 

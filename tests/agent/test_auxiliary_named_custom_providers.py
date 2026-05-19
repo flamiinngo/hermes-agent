@@ -492,3 +492,150 @@ class TestCustomProviderAliasCollision:
         assert isinstance(client, OpenAI)
         assert "override.example.com" in str(client.base_url)
         assert client.api_key == "override-key"
+
+
+class TestCustomProviderSslVerify:
+    """ssl_verify config field disables TLS verification for self-signed endpoints.
+
+    Regression guard for #28260 — custom_providers entries pointing at
+    self-signed HTTPS servers need a way to opt out of certificate
+    verification without touching global SSL settings.
+    """
+
+    def test_normalize_ssl_verify_false(self):
+        from hermes_cli.config import _normalize_custom_provider_entry
+        entry = {
+            "name": "local-llm",
+            "base_url": "https://192.168.1.50:8443/v1",
+            "api_key": "k",
+            "ssl_verify": False,
+        }
+        result = _normalize_custom_provider_entry(entry)
+        assert result is not None
+        assert result["ssl_verify"] is False
+
+    def test_normalize_ssl_verify_true_is_preserved(self):
+        from hermes_cli.config import _normalize_custom_provider_entry
+        entry = {
+            "name": "local-llm",
+            "base_url": "https://192.168.1.50:8443/v1",
+            "api_key": "k",
+            "ssl_verify": True,
+        }
+        result = _normalize_custom_provider_entry(entry)
+        assert result is not None
+        assert result["ssl_verify"] is True
+
+    def test_normalize_ssl_verify_ca_bundle_path(self):
+        from hermes_cli.config import _normalize_custom_provider_entry
+        entry = {
+            "name": "corp-llm",
+            "base_url": "https://llm.corp.internal/v1",
+            "api_key": "k",
+            "ssl_verify": "/etc/ssl/certs/corp-ca.pem",
+        }
+        result = _normalize_custom_provider_entry(entry)
+        assert result is not None
+        assert result["ssl_verify"] == "/etc/ssl/certs/corp-ca.pem"
+
+    def test_normalize_ssl_verify_absent_is_not_in_result(self):
+        from hermes_cli.config import _normalize_custom_provider_entry
+        entry = {
+            "name": "local-llm",
+            "base_url": "http://localhost:11434/v1",
+            "api_key": "k",
+        }
+        result = _normalize_custom_provider_entry(entry)
+        assert result is not None
+        assert "ssl_verify" not in result
+
+    def test_normalize_camelcase_ssl_verify_alias(self):
+        from hermes_cli.config import _normalize_custom_provider_entry
+        entry = {
+            "name": "local-llm",
+            "base_url": "https://192.168.1.50:8443/v1",
+            "api_key": "k",
+            "sslVerify": False,
+        }
+        result = _normalize_custom_provider_entry(entry)
+        assert result is not None
+        assert result["ssl_verify"] is False
+
+    def test_get_named_custom_provider_passes_ssl_verify(self, tmp_path):
+        _write_config(tmp_path, {
+            "custom_providers": [
+                {
+                    "name": "selfsigned",
+                    "base_url": "https://192.168.1.50:8443/v1",
+                    "api_key": "k",
+                    "ssl_verify": False,
+                }
+            ],
+        })
+        from hermes_cli.runtime_provider import _get_named_custom_provider
+        entry = _get_named_custom_provider("selfsigned")
+        assert entry is not None
+        assert entry.get("ssl_verify") is False
+
+    def test_providers_dict_passes_ssl_verify(self, tmp_path):
+        _write_config(tmp_path, {
+            "providers": {
+                "selfsigned": {
+                    "name": "selfsigned",
+                    "base_url": "https://192.168.1.50:8443/v1",
+                    "api_key": "k",
+                    "ssl_verify": False,
+                }
+            },
+        })
+        from hermes_cli.runtime_provider import _get_named_custom_provider
+        entry = _get_named_custom_provider("selfsigned")
+        assert entry is not None
+        assert entry.get("ssl_verify") is False
+
+    def test_resolve_provider_client_passes_http_client_when_ssl_verify_false(self, tmp_path):
+        """resolve_provider_client must pass httpx.Client(verify=False) to OpenAI
+        when the provider entry declares ssl_verify: false."""
+        import httpx
+        _write_config(tmp_path, {
+            "custom_providers": [
+                {
+                    "name": "selfsigned",
+                    "base_url": "https://192.168.1.50:8443/v1",
+                    "api_key": "k",
+                    "ssl_verify": False,
+                }
+            ],
+        })
+        with patch("agent.auxiliary_client.OpenAI") as mock_openai:
+            mock_openai.return_value = MagicMock()
+            from agent.auxiliary_client import resolve_provider_client
+            client, _ = resolve_provider_client("selfsigned", "test-model")
+
+        assert mock_openai.called
+        call_kwargs = mock_openai.call_args[1]
+        assert "http_client" in call_kwargs, (
+            "OpenAI() was not passed an http_client — ssl_verify was not threaded through"
+        )
+        http_client = call_kwargs["http_client"]
+        assert isinstance(http_client, httpx.Client)
+
+    def test_resolve_provider_client_no_http_client_when_ssl_verify_absent(self, tmp_path):
+        """When ssl_verify is not set, no http_client override should be injected."""
+        _write_config(tmp_path, {
+            "custom_providers": [
+                {
+                    "name": "normal",
+                    "base_url": "https://api.example.com/v1",
+                    "api_key": "k",
+                }
+            ],
+        })
+        with patch("agent.auxiliary_client.OpenAI") as mock_openai:
+            mock_openai.return_value = MagicMock()
+            from agent.auxiliary_client import resolve_provider_client
+            resolve_provider_client("normal", "test-model")
+
+        assert mock_openai.called
+        call_kwargs = mock_openai.call_args[1]
+        assert "http_client" not in call_kwargs

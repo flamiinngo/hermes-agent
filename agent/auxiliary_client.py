@@ -1669,7 +1669,7 @@ def clear_runtime_main() -> None:
     _RUNTIME_MAIN_MODEL = ""
 
 
-def _resolve_custom_runtime() -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def _resolve_custom_runtime() -> Tuple[Optional[str], Optional[str], Optional[str], Optional[Any]]:
     """Resolve the active custom/main endpoint the same way the main CLI does.
 
     This covers both env-driven OPENAI_BASE_URL setups and config-saved custom
@@ -1688,7 +1688,7 @@ def _resolve_custom_runtime() -> Tuple[Optional[str], Optional[str], Optional[st
         openai_base = os.getenv("OPENAI_BASE_URL", "").strip().rstrip("/")
         openai_key = os.getenv("OPENAI_API_KEY", "").strip()
         if not openai_base:
-            return None, None, None
+            return None, None, None, None
         runtime = {
             "base_url": openai_base,
             "api_key": openai_key,
@@ -1697,14 +1697,15 @@ def _resolve_custom_runtime() -> Tuple[Optional[str], Optional[str], Optional[st
     custom_base = runtime.get("base_url")
     custom_key = runtime.get("api_key")
     custom_mode = runtime.get("api_mode")
+    custom_ssl_verify = runtime.get("ssl_verify")
     if not isinstance(custom_base, str) or not custom_base.strip():
-        return None, None, None
+        return None, None, None, None
 
     custom_base = custom_base.strip().rstrip("/")
     if base_url_host_matches(custom_base, "openrouter.ai"):
         # requested='custom' falls back to OpenRouter when no custom endpoint is
         # configured. Treat that as "no custom endpoint" for auxiliary routing.
-        return None, None, None
+        return None, None, None, None
 
     # Local servers (Ollama, llama.cpp, vLLM, LM Studio) don't require auth.
     # Use a placeholder key — the OpenAI SDK requires a non-empty string but
@@ -1716,11 +1717,11 @@ def _resolve_custom_runtime() -> Tuple[Optional[str], Optional[str], Optional[st
     if not isinstance(custom_mode, str) or not custom_mode.strip():
         custom_mode = None
 
-    return custom_base, custom_key.strip(), custom_mode
+    return custom_base, custom_key.strip(), custom_mode, custom_ssl_verify
 
 
 def _current_custom_base_url() -> str:
-    custom_base, _, _ = _resolve_custom_runtime()
+    custom_base, _, _, _ = _resolve_custom_runtime()
     return custom_base or ""
 
 
@@ -1773,11 +1774,7 @@ def _validate_base_url(base_url: str) -> None:
 
 def _try_custom_endpoint() -> Tuple[Optional[Any], Optional[str]]:
     runtime = _resolve_custom_runtime()
-    if len(runtime) == 2:
-        custom_base, custom_key = runtime
-        custom_mode = None
-    else:
-        custom_base, custom_key, custom_mode = runtime
+    custom_base, custom_key, custom_mode, custom_ssl_verify = runtime
     if not custom_base or not custom_key:
         return None, None
     if custom_base.lower().startswith(_CODEX_AUX_BASE_URL.lower()):
@@ -1786,6 +1783,9 @@ def _try_custom_endpoint() -> Tuple[Optional[Any], Optional[str]]:
     logger.debug("Auxiliary client: custom endpoint (%s, api_mode=%s)", model, custom_mode or "chat_completions")
     _clean_base, _dq = _extract_url_query_params(custom_base)
     _extra = {"default_query": _dq} if _dq else {}
+    if custom_ssl_verify is not None:
+        import httpx as _httpx
+        _extra["http_client"] = _httpx.Client(verify=custom_ssl_verify)
     if custom_mode == "codex_responses":
         real_client = OpenAI(api_key=custom_key, base_url=_clean_base, **_extra)
         return CodexAuxiliaryClient(real_client, model), model
@@ -3077,6 +3077,10 @@ def resolve_provider_client(
                     raw_base_for_wrap = custom_base
                 _clean_base2, _dq2 = _extract_url_query_params(openai_base)
                 _extra2 = {"default_query": _dq2} if _dq2 else {}
+                _entry_ssl_verify = custom_entry.get("ssl_verify")
+                if _entry_ssl_verify is not None:
+                    import httpx as _httpx
+                    _extra2["http_client"] = _httpx.Client(verify=_entry_ssl_verify)
                 logger.debug(
                     "resolve_provider_client: named custom provider %r (%s, api_mode=%s)",
                     provider, final_model, entry_api_mode or "chat_completions")
@@ -3099,6 +3103,8 @@ def resolve_provider_client(
                         _fallback_base = _to_openai_base_url(custom_base)
                         _fb_clean, _fb_dq = _extract_url_query_params(_fallback_base)
                         _fb_extra = {"default_query": _fb_dq} if _fb_dq else {}
+                        if _entry_ssl_verify is not None:
+                            _fb_extra["http_client"] = _httpx.Client(verify=_entry_ssl_verify)
                         client = OpenAI(api_key=custom_key, base_url=_fb_clean, **_fb_extra)
                         return (_to_async_client(client, final_model, is_vision=is_vision) if async_mode
                                 else (client, final_model))
